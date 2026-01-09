@@ -102,12 +102,19 @@ from .views import (
     # ✅ NEW admin resume endpoints
     AdminResumeListCreateView,
     AdminResumeDetailView,
+    StudentRegisterView,   # ✅ add
+    StudentLoginView,
+    ForgotPasswordView,
+    ResetPasswordView,
 )
 
 urlpatterns = [
     path("send-otp/", SendOTPView.as_view()),
     path("verify-otp/", VerifyOTPView.as_view()),
-
+    path("register/", StudentRegisterView.as_view()),
+    path("login/", StudentLoginView.as_view()),
+    path("password/forgot/", ForgotPasswordView.as_view()),
+    path("password/reset/", ResetPasswordView.as_view()),
     path("admin/login/", AdminLoginView.as_view()),
     path("admin/users/", AdminUserListView.as_view()),
     path("admin/users/<int:pk>/", AdminUserDetailView.as_view()),

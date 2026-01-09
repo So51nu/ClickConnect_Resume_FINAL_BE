@@ -466,3 +466,155 @@ class ResumeSerializer(serializers.ModelSerializer):
         if "template" not in validated_data:
             validated_data["template"] = instance.template
         return super().update(instance, validated_data)
+
+# serializers.py
+from rest_framework import serializers
+from django.db.models import Q
+from .models import User
+
+
+class StudentRegisterSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=10)
+    name = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    pincode = serializers.CharField(max_length=6)
+    password = serializers.CharField(min_length=6, write_only=True)
+
+    def validate_phone(self, value):
+        value = "".join([c for c in value if c.isdigit()])
+        if len(value) != 10:
+            raise serializers.ValidationError("Mobile number must be 10 digits")
+        return value
+
+    def validate_pincode(self, value):
+        value = "".join([c for c in value if c.isdigit()])
+        if len(value) != 6:
+            raise serializers.ValidationError("Pincode must be 6 digits")
+        return value
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+    def validate(self, attrs):
+        phone = attrs["phone"]
+        email = attrs["email"]
+
+        # ✅ email kisi aur user ke paas hai?
+        email_owner = User.objects.filter(email__iexact=email).first()
+        phone_owner = User.objects.filter(phone=phone).first()
+
+        if email_owner and phone_owner and email_owner.id != phone_owner.id:
+            raise serializers.ValidationError({"email": "This email is already in use."})
+
+        if email_owner and not phone_owner:
+            raise serializers.ValidationError({"email": "This email is already registered."})
+
+        return attrs
+
+    def create(self, validated_data):
+        phone = validated_data["phone"]
+        email = validated_data["email"]
+        password = validated_data["password"]
+
+        name = validated_data.get("name", "")
+        pincode = validated_data.get("pincode", "")
+
+        user = User.objects.filter(phone=phone).first()
+
+        # ✅ If phone user exists (OTP user), allow converting to email/password account
+        if user:
+            user.name = name or user.name
+            user.pincode = pincode or user.pincode
+            user.email = email
+            user.is_staff = False
+            user.set_password(password)
+            user.save()
+            return user
+
+        # ✅ New create
+        user = User.objects.create(
+            phone=phone,
+            name=name,
+            email=email,
+            pincode=pincode,
+            is_staff=False,
+        )
+        user.set_password(password)
+        user.save()
+        return user
+
+
+class StudentLoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+    def validate(self, attrs):
+        email = attrs["email"]
+        password = attrs["password"]
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            raise serializers.ValidationError({"detail": "Invalid email or password"})
+
+        if user.is_staff:
+            raise serializers.ValidationError({"detail": "Please use Admin Login for admin account"})
+
+        if not user.is_active:
+            raise serializers.ValidationError({"detail": "Account is disabled"})
+
+        if not user.check_password(password):
+            raise serializers.ValidationError({"detail": "Invalid email or password"})
+
+        attrs["user"] = user
+        return attrs
+
+
+# users/serializers.py
+from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_str
+
+from .models import User
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=6)
+
+    def validate_password(self, value):
+        # ✅ Django password validators apply (min length, common password etc.)
+        validate_password(value)
+        return value
+
+    def validate(self, attrs):
+        uid = attrs.get("uid")
+        token = attrs.get("token")
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id)
+        except Exception:
+            raise serializers.ValidationError({"detail": "Invalid reset link"})
+
+        # ✅ only student accounts (optional restriction)
+        if user.is_staff:
+            raise serializers.ValidationError({"detail": "Invalid reset link"})
+
+        if not default_token_generator.check_token(user, token):
+            raise serializers.ValidationError({"detail": "Reset link expired or invalid"})
+
+        attrs["user"] = user
+        return attrs
