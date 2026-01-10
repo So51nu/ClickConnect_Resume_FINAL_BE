@@ -618,3 +618,153 @@ class ResetPasswordSerializer(serializers.Serializer):
 
         attrs["user"] = user
         return attrs
+
+# users/serializers.py
+from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_str
+
+from .models import User
+
+
+class AdminForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
+class AdminResetPasswordSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=6)
+
+    def validate_password(self, value):
+        validate_password(value)
+        return value
+
+    def validate(self, attrs):
+        uid = attrs.get("uid")
+        token = attrs.get("token")
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id)
+        except Exception:
+            raise serializers.ValidationError({"detail": "Invalid reset link"})
+
+        # ✅ ADMIN only
+        if not user.is_staff:
+            raise serializers.ValidationError({"detail": "Invalid reset link"})
+
+        if not default_token_generator.check_token(user, token):
+            raise serializers.ValidationError({"detail": "Reset link expired or invalid"})
+
+        attrs["user"] = user
+        return attrs
+
+# users/serializers.py
+from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from .models import User
+
+# users/serializers.py
+from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from .models import User
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False, allow_blank=False)
+    is_superuser = serializers.BooleanField(required=False)  # ✅ allow in request (controlled below)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "phone",
+            "name",
+            "email",
+            "is_active",
+            "is_superuser",   # ✅ show + optional update
+            "password",
+            "date_joined",
+        ]
+        read_only_fields = ["id", "date_joined"]
+
+    def validate_phone(self, value):
+        value = "".join([c for c in (value or "") if c.isdigit()])
+        if len(value) != 10:
+            raise serializers.ValidationError("Phone must be 10 digits")
+        return value
+
+    def validate_email(self, value):
+        # keep empty as "" (or you can return None if you made null=True in model)
+        value = (value or "").strip().lower()
+        return value
+
+    def _can_manage_superuser(self) -> bool:
+        request = self.context.get("request")
+        return bool(request and request.user and request.user.is_superuser)
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+
+        # ✅ remove any accidental fields
+        validated_data.pop("is_staff", None)
+
+        # requested superuser flag
+        requested_super = bool(validated_data.pop("is_superuser", False))
+
+        # ✅ create user first
+        user = User.objects.create(**validated_data)
+
+        # ✅ ALWAYS staff for this API
+        user.is_staff = True
+
+        # ✅ superuser only if current requester is superuser
+        if requested_super and self._can_manage_superuser():
+            user.is_superuser = True
+        else:
+            user.is_superuser = False
+
+        # ✅ password required if creating superuser (recommended)
+        if user.is_superuser and not password:
+            raise serializers.ValidationError({"password": "Password is required for superuser"})
+
+        if password:
+            validate_password(password)
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+
+        # ✅ don't allow changing staff flag from payload
+        validated_data.pop("is_staff", None)
+
+        # requested superuser change
+        requested_super = validated_data.pop("is_superuser", None)
+
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+
+        # ✅ always staff
+        instance.is_staff = True
+
+        # ✅ allow superuser toggle ONLY if requester is superuser
+        if requested_super is not None and self._can_manage_superuser():
+            instance.is_superuser = bool(requested_super)
+
+        if password:
+            validate_password(password)
+            instance.set_password(password)
+
+        instance.save()
+        return instance

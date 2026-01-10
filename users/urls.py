@@ -106,6 +106,10 @@ from .views import (
     StudentLoginView,
     ForgotPasswordView,
     ResetPasswordView,
+    AdminForgotPasswordView,
+    AdminResetPasswordView,
+    AdminStaffListCreateView,
+    AdminStaffDetailView,
 )
 
 urlpatterns = [
@@ -118,7 +122,10 @@ urlpatterns = [
     path("admin/login/", AdminLoginView.as_view()),
     path("admin/users/", AdminUserListView.as_view()),
     path("admin/users/<int:pk>/", AdminUserDetailView.as_view()),
-
+    path("admin/password/forgot/", AdminForgotPasswordView.as_view()),
+    path("admin/password/reset/", AdminResetPasswordView.as_view()),
+    path("admin/staff/", AdminStaffListCreateView.as_view()),
+    path("admin/staff/<int:pk>/", AdminStaffDetailView.as_view()),
     path("admin/templates/", AdminTemplateListCreateView.as_view()),
     path("admin/templates/<int:pk>/", AdminTemplateDetailView.as_view()),
 

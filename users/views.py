@@ -1291,3 +1291,124 @@ class ResetPasswordView(APIView):
         user.save()
 
         return Response({"message": "Password reset successful. Please login now."}, status=200)
+
+
+# users/views.py
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework import status
+
+from .models import User
+from .serializers import AdminForgotPasswordSerializer, AdminResetPasswordSerializer
+
+
+class AdminForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = AdminForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+
+        # ✅ only admin users
+        user = User.objects.filter(email__iexact=email, is_staff=True, is_active=True).first()
+
+        if user and user.email:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+
+            frontend = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
+            reset_link = f"{frontend}/admin/reset-password?uid={uid}&token={token}"
+
+            subject = "Admin password reset"
+            text_body = (
+                f"Hi {user.name or 'Admin'},\n\n"
+                f"You requested an admin password reset.\n"
+                f"Open this link to set a new password:\n{reset_link}\n\n"
+                f"If you did not request this, ignore this email.\n"
+            )
+
+            # ✅ IMPORTANT: avoid empty from_email
+            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or None
+
+            msg = EmailMultiAlternatives(
+                subject=subject,
+                body=text_body,
+                from_email=from_email,
+                to=[user.email],
+            )
+            msg.send(fail_silently=False)
+
+        # ✅ same response always (security)
+        return Response(
+            {"message": "If this email is registered, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = AdminResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data["user"]
+        password = serializer.validated_data["password"]
+
+        user.set_password(password)
+        user.save()
+
+        return Response({"message": "Admin password reset successful. Please login now."}, status=200)
+
+
+# users/views.py
+from rest_framework import generics
+from rest_framework.permissions import IsAdminUser
+from .models import User
+from .serializers import AdminUserSerializer
+
+# class AdminStaffListCreateView(generics.ListCreateAPIView):
+#     permission_classes = [IsAdminUser]
+#     serializer_class = AdminUserSerializer
+
+#     def get_queryset(self):
+#         return User.objects.filter(is_staff=True).order_by("-date_joined")
+
+
+# class AdminStaffDetailView(generics.RetrieveUpdateDestroyAPIView):
+#     permission_classes = [IsAdminUser]
+#     serializer_class = AdminUserSerializer
+
+#     def get_queryset(self):
+#         return User.objects.filter(is_staff=True)
+
+# users/views.py
+from rest_framework import generics
+from rest_framework.permissions import IsAdminUser
+from .models import User
+from .serializers import AdminUserSerializer
+
+
+class AdminStaffListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminUserSerializer
+
+    def get_queryset(self):
+        return User.objects.filter(is_staff=True).order_by("-date_joined")
+
+
+class AdminStaffDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminUserSerializer
+
+    def get_queryset(self):
+        return User.objects.filter(is_staff=True)
