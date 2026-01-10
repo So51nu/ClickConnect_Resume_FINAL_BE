@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: clickconnect-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn website_backend.wsgi:application
