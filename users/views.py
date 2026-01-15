@@ -675,6 +675,112 @@ import requests
 
 from .models import ResumeTemplate
 from .serializers import ResumeTemplateSerializer
+# ------------------------------
+# ✅ Schema Normalizer (BACKEND)
+# ------------------------------
+
+def normalize_template_schema(schema: dict) -> dict:
+    """
+    ✅ Backward compatible normalizer:
+    - old schemas (no type) => auto add type/dataKey
+    - new schemas (already type based) => keep as is
+    """
+    if not isinstance(schema, dict):
+        return {}
+
+    s = dict(schema)  # shallow copy
+    s.setdefault("version", 1)
+    s.setdefault("layout", "Single Column")
+    s.setdefault("theme", {})
+    s.setdefault("order", [])
+    s.setdefault("columns", {"left": [], "right": []})
+    s.setdefault("sections", {})
+
+    sections = s.get("sections") or {}
+    if not isinstance(sections, dict):
+        sections = {}
+    # helper to set defaults
+    def ensure_section(id_, default_type, default_key=None):
+        cfg = sections.get(id_) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg.setdefault("enabled", True)
+
+        # if already type is present => don't override
+        if "type" not in cfg:
+            cfg["type"] = default_type
+        if default_key and "dataKey" not in cfg:
+            cfg["dataKey"] = default_key
+        sections[id_] = cfg
+
+    # ✅ default mapping (old templates auto work)
+    ensure_section("header", "header", "header")
+    ensure_section("summary", "text", "summary")
+    ensure_section("experience", "timeline", "experience")
+    ensure_section("education", "timeline", "education")
+    ensure_section("projects", "timeline", "projects")
+    ensure_section("skills", "skills", "skills")
+    ensure_section("certifications", "list", "certifications")
+
+    # languages: if schema says display=dots then frontend will show dots
+    ensure_section("languages", "languages", "languages")
+
+    # optional sections (if exists in schema, set types)
+    if "courses" in sections:
+        ensure_section("courses", "list", "courses")
+    if "achievements" in sections:
+        ensure_section("achievements", "grid", "achievements")
+    if "strengths" in sections:
+        ensure_section("strengths", "grid", "strengths")
+    if "contacts" in sections:
+        ensure_section("contacts", "contacts", "header")  # contacts reads header
+    if "interests" in sections:
+        ensure_section("interests", "list", "interests")
+    if "sidebarProfile" in sections:
+        ensure_section("sidebarProfile", "avatar", "header")
+
+    # ✅ also, if new templates add random sections without type
+    # we auto guess:
+    for sec_id, cfg in list(sections.items()):
+        if not isinstance(cfg, dict):
+            continue
+        if "type" in cfg:
+            continue
+        # guess by name
+        if sec_id in ("experience", "education", "projects"):
+            cfg["type"] = "timeline"
+            cfg.setdefault("dataKey", sec_id)
+        elif sec_id in ("summary", "objective"):
+            cfg["type"] = "text"
+            cfg.setdefault("dataKey", sec_id)
+        elif sec_id in ("languages",):
+            cfg["type"] = "languages"
+            cfg.setdefault("dataKey", sec_id)
+        else:
+            # fallback
+            cfg["type"] = "list"
+            cfg.setdefault("dataKey", sec_id)
+        sections[sec_id] = cfg
+
+    s["sections"] = sections
+    return s
+
+
+def normalize_marketplace_template(tpl: dict) -> dict:
+    """
+    normalize single template dict in MARKETPLACE_TEMPLATES
+    """
+    if not isinstance(tpl, dict):
+        return {}
+    out = dict(tpl)
+    out["schema"] = normalize_template_schema(out.get("schema") or {})
+    return out
+
+
+def normalized_marketplace_templates(raw_list: list) -> list:
+    if not isinstance(raw_list, list):
+        return []
+    return [normalize_marketplace_template(x) for x in raw_list]
 
 # ✅ Marketplace templates (FREE) - yahan aap easily add/remove kar sakte ho
 MARKETPLACE_TEMPLATES = [
@@ -780,6 +886,10 @@ MARKETPLACE_TEMPLATES = [
             },
         },
     },
+   
+
+
+
 ]
 
 
@@ -787,7 +897,7 @@ class AdminMarketplaceTemplatesView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        return Response({"results": MARKETPLACE_TEMPLATES})
+        return Response({"results": normalized_marketplace_templates(MARKETPLACE_TEMPLATES)})
 
 
 class AdminTemplateImportView(APIView):
@@ -812,6 +922,8 @@ class AdminTemplateImportView(APIView):
             layout = tpl["layout"]
             color = tpl.get("color", "#2563eb")
             schema = tpl.get("schema", {})
+            
+            schema = normalize_template_schema(schema)
             preview_url = tpl.get("preview_image_url", "")
         else:
             # direct import support
@@ -820,6 +932,8 @@ class AdminTemplateImportView(APIView):
             layout = request.data.get("layout", "Two Column")
             color = request.data.get("color", "#2563eb")
             schema = request.data.get("schema", {})
+            
+            schema = normalize_template_schema(schema)
             preview_url = request.data.get("preview_image_url", "")
 
             if not name:
