@@ -41,6 +41,7 @@ SECRET_KEY = 'django-insecure-74^pd4-l1wpx7#-2=d5hh%l!3ea3suidthc1@#c2jw9!7-g)i&
 DEBUG = True
 AUTH_USER_MODEL = "users.User"
 AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
     "users.auth_backend.PhoneBackend",
 ]
 ALLOWED_HOSTS = ["*"]
@@ -53,6 +54,10 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ),
 }
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
@@ -151,7 +156,14 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

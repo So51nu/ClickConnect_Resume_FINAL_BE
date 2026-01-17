@@ -1,25 +1,334 @@
+# # users/ai_resume.py
+# import json
+# import os
+# import requests
+
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# # ✅ safest model for Structured Outputs
+# OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
+
+# # ✅ IMPORTANT:
+# # This must be the RAW JSON Schema object (NOT {"name":..,"schema":..} wrapper)
+# RESUME_SCHEMA = {
+#     "type": "object",
+#     "additionalProperties": False,
+#     "required": ["title", "data"],
+#     "properties": {
+#         "title": {"type": "string"},
+#         "data": {
+#             "type": "object",
+#             "additionalProperties": False,
+#             # ✅ MUST include ALL keys from properties when strict + additionalProperties=false
+#             "required": [
+#                 "header",
+#                 "summary",
+#                 "experience",
+#                 "education",
+#                 "skills",
+#                 "projects",
+#                 "certifications",
+#                 "languages",
+#                 "interests",
+#                 "strengths",
+#                 "achievements",
+#                 "courses",
+#             ],
+#             "properties": {
+#                 "header": {
+#                     "type": "object",
+#                     "additionalProperties": False,
+#                     "required": [
+#                         "fullName",
+#                         "jobTitle",
+#                         "email",
+#                         "phone",
+#                         "location",
+#                         "linkedin",
+#                         "website",
+#                     ],
+#                     "properties": {
+#                         "fullName": {"type": "string"},
+#                         "jobTitle": {"type": "string"},
+#                         "email": {"type": "string"},
+#                         "phone": {"type": "string"},
+#                         "location": {"type": "string"},
+#                         "linkedin": {"type": "string"},
+#                         "website": {"type": "string"},
+#                     },
+#                 },
+#                 "summary": {"type": "string"},
+#                 "experience": {
+#                     "type": "array",
+#                     "items": {
+#                         "type": "object",
+#                         "additionalProperties": False,
+#                         "required": ["title", "company", "location", "from", "to", "bullets"],
+#                         "properties": {
+#                             "title": {"type": "string"},
+#                             "company": {"type": "string"},
+#                             "location": {"type": "string"},
+#                             "from": {"type": "string"},
+#                             "to": {"type": "string"},
+#                             "bullets": {"type": "array", "items": {"type": "string"}},
+#                         },
+#                     },
+#                 },
+#                 "education": {
+#                     "type": "array",
+#                     "items": {
+#                         "type": "object",
+#                         "additionalProperties": False,
+#                         "required": ["school", "degree", "from", "to"],
+#                         "properties": {
+#                             "school": {"type": "string"},
+#                             "degree": {"type": "string"},
+#                             "from": {"type": "string"},
+#                             "to": {"type": "string"},
+#                         },
+#                     },
+#                 },
+#                 "skills": {
+#                     "type": "object",
+#                     "additionalProperties": False,
+#                     "required": ["programming", "frameworks", "tools"],
+#                     "properties": {
+#                         "programming": {"type": "array", "items": {"type": "string"}},
+#                         "frameworks": {"type": "array", "items": {"type": "string"}},
+#                         "tools": {"type": "array", "items": {"type": "string"}},
+#                     },
+#                 },
+#                 "projects": {
+#                     "type": "array",
+#                     "items": {
+#                         "type": "object",
+#                         "additionalProperties": False,
+#                         "required": ["name", "desc"],
+#                         "properties": {
+#                             "name": {"type": "string"},
+#                             "desc": {"type": "string"},
+#                         },
+#                     },
+#                 },
+
+#                 # ✅ optional sections but REQUIRED by schema (return empty arrays if none)
+#                 "certifications": {"type": "array", "items": {"type": "string"}},
+#                 "languages": {"type": "array", "items": {"type": "string"}},
+#                 "interests": {"type": "array", "items": {"type": "string"}},
+#                 "strengths": {"type": "array", "items": {"type": "string"}},
+#                 "achievements": {"type": "array", "items": {"type": "string"}},
+#                 "courses": {"type": "array", "items": {"type": "string"}},
+#             },
+#         },
+#     },
+# }
+
+
+# def call_openai_resume(prompt: str,response_schema: dict) -> dict:
+#     if not OPENAI_API_KEY:
+#         raise RuntimeError("OPENAI_API_KEY missing in environment (.env)")
+
+#     url = "https://api.openai.com/v1/responses"
+#     headers = {
+#         "Authorization": f"Bearer {OPENAI_API_KEY}",
+#         "Content-Type": "application/json",
+#     }
+
+#     instructions = (
+#         "You are an expert resume writer.\n"
+#         "Create a professional resume from the user's prompt.\n"
+#         "Return ONLY JSON that matches the JSON Schema.\n"
+#         "Use strong action verbs, quantified bullets, realistic dates.\n"
+#         "If info missing, infer reasonable placeholders (but keep it believable).\n"
+#     )
+
+#     body = {
+#         "model": OPENAI_MODEL,
+#         "instructions": instructions,
+#         "input": [{"role": "user", "content": prompt}],
+#         "temperature": 0.2,
+#         "text": {
+#             "format": {
+#                 "type": "json_schema",
+#                 "name": "resume_data",
+#                 "strict": True,
+#                 "schema": response_schema,
+#             }
+#         },
+#         "max_output_tokens": 2000,
+#     }
+
+#     r = requests.post(url, headers=headers, data=json.dumps(body), timeout=60)
+
+#     # ✅ show real OpenAI error (super helpful)
+#     if r.status_code >= 400:
+#         raise RuntimeError(f"OpenAI error {r.status_code}: {r.text}")
+
+#     payload = r.json()
+
+#     # Extract output_text
+#     out_text = ""
+#     for item in payload.get("output", []):
+#         if item.get("type") == "message":
+#             for c in item.get("content", []):
+#                 if c.get("type") == "output_text":
+#                     out_text += c.get("text", "")
+
+#     if not out_text.strip():
+#         raise RuntimeError(f"No output_text. Raw: {payload}")
+
+#     return json.loads(out_text)
+
+# def build_dynamic_resume_schema(extra_text_fields: list[str]) -> dict:
+#     # extra_text_fields => ["communication", "leadership", "references"] etc
+
+#     base_required = [
+#         "header", "summary", "experience", "education", "skills", "projects",
+#         "certifications", "languages", "interests", "strengths", "achievements", "courses"
+#     ]
+
+#     # Add extra text fields as required too
+#     data_required = list(dict.fromkeys(base_required + extra_text_fields))
+
+#     # Base properties
+#     data_properties = {
+#         "header": {
+#             "type": "object",
+#             "additionalProperties": False,
+#             "required": ["fullName", "jobTitle", "email", "phone", "location", "linkedin", "website"],
+#             "properties": {
+#                 "fullName": {"type": "string"},
+#                 "jobTitle": {"type": "string"},
+#                 "email": {"type": "string"},
+#                 "phone": {"type": "string"},
+#                 "location": {"type": "string"},
+#                 "linkedin": {"type": "string"},
+#                 "website": {"type": "string"},
+#             },
+#         },
+#         "summary": {"type": "string"},
+#         "experience": {
+#             "type": "array",
+#             "items": {
+#                 "type": "object",
+#                 "additionalProperties": False,
+#                 "required": ["title", "company", "location", "from", "to", "bullets"],
+#                 "properties": {
+#                     "title": {"type": "string"},
+#                     "company": {"type": "string"},
+#                     "location": {"type": "string"},
+#                     "from": {"type": "string"},
+#                     "to": {"type": "string"},
+#                     "bullets": {"type": "array", "items": {"type": "string"}},
+#                 },
+#             },
+#         },
+#         "education": {
+#             "type": "array",
+#             "items": {
+#                 "type": "object",
+#                 "additionalProperties": False,
+#                 "required": ["school", "degree", "from", "to"],
+#                 "properties": {
+#                     "school": {"type": "string"},
+#                     "degree": {"type": "string"},
+#                     "from": {"type": "string"},
+#                     "to": {"type": "string"},
+#                 },
+#             },
+#         },
+#         "skills": {
+#             "type": "object",
+#             "additionalProperties": False,
+#             "required": ["programming", "frameworks", "tools"],
+#             "properties": {
+#                 "programming": {"type": "array", "items": {"type": "string"}},
+#                 "frameworks": {"type": "array", "items": {"type": "string"}},
+#                 "tools": {"type": "array", "items": {"type": "string"}},
+#             },
+#         },
+#         "projects": {
+#             "type": "array",
+#             "items": {
+#                 "type": "object",
+#                 "additionalProperties": False,
+#                 "required": ["name", "desc"],
+#                 "properties": {
+#                     "name": {"type": "string"},
+#                     "desc": {"type": "string"},
+#                 },
+#             },
+#         },
+
+#         "certifications": {"type": "array", "items": {"type": "string"}},
+#         "languages": {"type": "array", "items": {"type": "string"}},
+#         "interests": {"type": "array", "items": {"type": "string"}},
+#         "strengths": {"type": "array", "items": {"type": "string"}},
+#         "achievements": {"type": "array", "items": {"type": "string"}},
+#         "courses": {"type": "array", "items": {"type": "string"}},
+#     }
+
+#     # Add template-driven extra fields as TEXT sections
+#     for k in extra_text_fields:
+#         data_properties[k] = {"type": "string"}
+
+#     return {
+#         "type": "object",
+#         "additionalProperties": False,
+#         "required": ["title", "data"],
+#         "properties": {
+#             "title": {"type": "string"},
+#             "data": {
+#                 "type": "object",
+#                 "additionalProperties": False,
+#                 "required": data_required,
+#                 "properties": data_properties,
+#             },
+#         },
+#     }
+
 # users/ai_resume.py
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
-
 import requests
+from typing import List, Dict, Any
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
+
+# Base optional arrays we always force (OpenAI strict requires required contains all keys)
+OPTIONAL_ARRAY_KEYS = [
+    "certifications",
+    "languages",
+    "interests",
+    "strengths",
+    "achievements",
+    "courses",
+]
+
+BASE_KEYS = [
+    "header",
+    "summary",
+    "experience",
+    "education",
+    "skills",
+    "projects",
+] + OPTIONAL_ARRAY_KEYS
 
 
-def _enabled_sections(schema: Dict[str, Any]) -> List[str]:
-    sections = (schema or {}).get("sections") or {}
-    enabled = [k for k, v in sections.items() if (v or {}).get("enabled") is True]
-    return enabled or ["header", "summary", "experience", "education", "skills", "projects"]
+def build_dynamic_resume_schema(extra_text_fields: List[str]) -> Dict[str, Any]:
+    """
+    extra_text_fields: list of keys like ["communication", "leadership", "references"]
+    These will be added as string fields in data and REQUIRED (OpenAI strict + closed schema).
+    """
 
+    extra_text_fields = [x for x in extra_text_fields if isinstance(x, str) and x.strip()]
+    extra_text_fields = list(dict.fromkeys(extra_text_fields))  # unique
 
-def _resume_schema_for(schema: Dict[str, Any]) -> Dict[str, Any]:
-    enabled = set(_enabled_sections(schema))
-
-    # base resume object (same as your frontend data structure)
-    props: Dict[str, Any] = {
+    data_properties: Dict[str, Any] = {
         "header": {
             "type": "object",
             "additionalProperties": False,
+            "required": ["fullName", "jobTitle", "email", "phone", "location", "linkedin", "website"],
             "properties": {
                 "fullName": {"type": "string"},
                 "jobTitle": {"type": "string"},
@@ -29,7 +338,6 @@ def _resume_schema_for(schema: Dict[str, Any]) -> Dict[str, Any]:
                 "linkedin": {"type": "string"},
                 "website": {"type": "string"},
             },
-            "required": ["fullName", "jobTitle", "email", "phone", "location", "linkedin", "website"],
         },
         "summary": {"type": "string"},
         "experience": {
@@ -37,6 +345,7 @@ def _resume_schema_for(schema: Dict[str, Any]) -> Dict[str, Any]:
             "items": {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["title", "company", "location", "from", "to", "bullets"],
                 "properties": {
                     "title": {"type": "string"},
                     "company": {"type": "string"},
@@ -45,7 +354,6 @@ def _resume_schema_for(schema: Dict[str, Any]) -> Dict[str, Any]:
                     "to": {"type": "string"},
                     "bullets": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["title", "company", "location", "from", "to", "bullets"],
             },
         },
         "education": {
@@ -53,161 +361,116 @@ def _resume_schema_for(schema: Dict[str, Any]) -> Dict[str, Any]:
             "items": {
                 "type": "object",
                 "additionalProperties": False,
+                "required": ["school", "degree", "from", "to"],
                 "properties": {
                     "school": {"type": "string"},
                     "degree": {"type": "string"},
                     "from": {"type": "string"},
                     "to": {"type": "string"},
                 },
-                "required": ["school", "degree", "from", "to"],
             },
         },
         "skills": {
             "type": "object",
             "additionalProperties": False,
+            "required": ["programming", "frameworks", "tools"],
             "properties": {
                 "programming": {"type": "array", "items": {"type": "string"}},
                 "frameworks": {"type": "array", "items": {"type": "string"}},
                 "tools": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["programming", "frameworks", "tools"],
         },
         "projects": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": {"name": {"type": "string"}, "desc": {"type": "string"}},
                 "required": ["name", "desc"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "desc": {"type": "string"},
+                },
             },
         },
         "certifications": {"type": "array", "items": {"type": "string"}},
         "languages": {"type": "array", "items": {"type": "string"}},
+        "interests": {"type": "array", "items": {"type": "string"}},
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "achievements": {"type": "array", "items": {"type": "string"}},
+        "courses": {"type": "array", "items": {"type": "string"}},
     }
 
-    # Remove disabled sections (optional ones)
-    # header is assumed enabled always in your builder but keep safe:
-    for key in list(props.keys()):
-        if key in ("certifications", "languages"):
-            # only keep if enabled in schema
-            if key not in enabled:
-                props.pop(key, None)
-        else:
-            if key not in enabled:
-                props.pop(key, None)
+    # Add extra template-driven fields as strings
+    for k in extra_text_fields:
+        data_properties[k] = {"type": "string"}
 
-    required_fields = [k for k in props.keys() if k not in ("certifications", "languages")]
+    # ✅ OpenAI strict requirement: required must include ALL property keys
+    data_required = list(data_properties.keys())
 
-    # Final response schema (title + resume)
     return {
         "type": "object",
         "additionalProperties": False,
+        "required": ["title", "data"],
         "properties": {
             "title": {"type": "string"},
-            "resume": {
+            "data": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": props,
-                "required": required_fields,
+                "required": data_required,
+                "properties": data_properties,
             },
         },
-        "required": ["title", "resume"],
     }
 
 
-def _extract_output_text(resp_json: Dict[str, Any]) -> str:
-    """
-    Tries to extract assistant output text from Responses API result.
-    """
-    # New Responses API often returns output list with content items
-    out = resp_json.get("output")
-    if isinstance(out, list):
-        chunks: List[str] = []
-        for item in out:
-            content = item.get("content") if isinstance(item, dict) else None
-            if isinstance(content, list):
-                for c in content:
-                    if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
-                        t = c.get("text")
-                        if isinstance(t, str) and t.strip():
-                            chunks.append(t)
-        if chunks:
-            return "\n".join(chunks).strip()
+def call_openai_resume(prompt: str, response_schema: Dict[str, Any]) -> dict:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY missing in .env / environment")
 
-    # Fallback (some SDK styles)
-    if isinstance(resp_json.get("output_text"), str):
-        return resp_json["output_text"].strip()
+    url = "https://api.openai.com/v1/responses"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
 
-    raise ValueError("Could not extract output text from OpenAI response")
-
-
-def generate_ai_resume(
-    schema: Dict[str, Any],
-    user_prompt: str,
-    language: str = "en",
-    model: str = "gpt-4o-mini",
-    max_output_tokens: int = 1600,
-) -> Tuple[str, Dict[str, Any]]:
-    """
-    Returns: (title, resume_dict)
-    """
-    api_key = os.getenv("OPENAI_API_KEY") or ""
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is missing in environment")
-
-    json_schema = _resume_schema_for(schema)
-
-    sys = (
-        "You generate ATS-friendly resumes as STRICT JSON matching the provided schema. "
-        "No extra keys. No markdown. "
-        "Dates: use YYYY-MM when possible, else YYYY. "
-        "Bullets: concise, impact-driven, metrics when possible."
+    instructions = (
+        "You are an expert resume writer.\n"
+        "Create a professional resume from the user's prompt.\n"
+        "Return ONLY JSON that matches the JSON Schema.\n"
+        "Rules:\n"
+        "- Use strong action verbs, quantified bullets, realistic dates.\n"
+        "- Always include optional arrays keys even if empty: certifications,languages,interests,strengths,achievements,courses.\n"
+        "- For any template-driven text fields, return meaningful text or empty string.\n"
     )
-    if language.lower() == "hi":
-        sys += " Output text values in Hindi (but keep JSON keys same)."
-    elif language.lower() == "mr":
-        sys += " Output text values in Marathi (but keep JSON keys same)."
 
-    payload = {
-        "model": model,
-        "instructions": sys,
-        "input": [
-            {
-                "role": "user",
-                "content": (
-                    "Generate a complete resume JSON.\n\n"
-                    f"User details / requirements:\n{user_prompt}\n"
-                ),
-            }
-        ],
-        # Structured Outputs via Responses API text.format :contentReference[oaicite:4]{index=4}
+    body = {
+        "model": OPENAI_MODEL,
+        "instructions": instructions,
+        "input": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "resume_payload",
-                "schema": json_schema,
+                "name": "resume_data",   # ✅ required
                 "strict": True,
+                "schema": response_schema,
             }
         },
-        "max_output_tokens": max_output_tokens,
+        "max_output_tokens": 2000,
     }
 
-    r = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",  # :contentReference[oaicite:5]{index=5}
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=60,
-    )
+    r = requests.post(url, headers=headers, data=json.dumps(body), timeout=60)
+
     if r.status_code >= 400:
-        raise ValueError(f"OpenAI API error: {r.status_code} {r.text}")
+        raise RuntimeError(f"OpenAI error {r.status_code}: {r.text}")
 
-    resp_json = r.json()
-    text = _extract_output_text(resp_json)
+    payload = r.json()
 
-    data = json.loads(text)
-    title = data.get("title") or "AI Generated Resume"
-    resume = data.get("resume") or {}
-    return title, resume
+    out_text = ""
+    for item in payload.get("output", []):
+        if item.get("type") == "message":
+            for c in item.get("content", []):
+                if c.get("type") == "output_text":
+                    out_text += c.get("text", "")
+
+    if not out_text.strip():
+        raise RuntimeError("No output_text from OpenAI response")
+
+    return json.loads(out_text)

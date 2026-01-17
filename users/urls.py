@@ -73,7 +73,7 @@
 #     path("student/resumes/<int:resume_id>/download/", StudentResumeDownloadView.as_view(), name="student-resume-download"),
 
 # ]
-
+from .views import AIResumeGenerateView
 from django.urls import path
 from .views import (
     SendOTPView,
@@ -110,8 +110,12 @@ from .views import (
     AdminResetPasswordView,
     AdminStaffListCreateView,
     AdminStaffDetailView,
-)
 
+    
+)
+from .views import AITemplateSuggestionsView
+from .views import  AIResumeGenerateView
+from .views_exports import ResumeExportPDFView, ResumeExportDOCXView
 urlpatterns = [
     path("send-otp/", SendOTPView.as_view()),
     path("verify-otp/", VerifyOTPView.as_view()),
@@ -128,7 +132,10 @@ urlpatterns = [
     path("admin/staff/<int:pk>/", AdminStaffDetailView.as_view()),
     path("admin/templates/", AdminTemplateListCreateView.as_view()),
     path("admin/templates/<int:pk>/", AdminTemplateDetailView.as_view()),
-
+    path("ai/templates/suggestions/", AITemplateSuggestionsView.as_view(), name="ai-template-suggestions"),
+    path("ai/resume/generate/", AIResumeGenerateView.as_view(), name="ai-resume-generate"),
+    path("resumes/<int:resume_id>/export/pdf/", ResumeExportPDFView.as_view()),
+    path("resumes/<int:resume_id>/export/docx/", ResumeExportDOCXView.as_view()),
     path("admin/template-marketplace/", AdminMarketplaceTemplatesView.as_view()),
     path("admin/templates/import/", AdminTemplateImportView.as_view()),
     path("admin/templates/<int:pk>/duplicate/", AdminTemplateDuplicateView.as_view()),
