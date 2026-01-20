@@ -17,6 +17,11 @@ load_dotenv()
 from pathlib import Path
 from datetime import timedelta
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
+import os
+
+os.environ["RAZORPAY_KEY_ID"] = "rzp_live_RpuzxMTVuMMQoD"
+os.environ["RAZORPAY_KEY_SECRET"] = "xzycX0y1IIVFJlZVUc4T41Gm"
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # settings.py
@@ -164,6 +169,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

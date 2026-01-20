@@ -110,14 +110,20 @@ from .views import (
     AdminResetPasswordView,
     AdminStaffListCreateView,
     AdminStaffDetailView,
+    AdminPaymentsListView,
+    StudentTemplateOrderCreateView,
+    StudentTemplatePaymentVerifyView,
 
     
 )
+from .views import AdminAIUsageView
+
 from .views import AITemplateSuggestionsView
 from .views import  AIResumeGenerateView
 from .views_exports import ResumeExportPDFView, ResumeExportDOCXView
 urlpatterns = [
     path("send-otp/", SendOTPView.as_view()),
+    path("admin/payments/", AdminPaymentsListView.as_view()),
     path("verify-otp/", VerifyOTPView.as_view()),
     path("register/", StudentRegisterView.as_view()),
     path("login/", StudentLoginView.as_view()),
@@ -126,6 +132,7 @@ urlpatterns = [
     path("admin/login/", AdminLoginView.as_view()),
     path("admin/users/", AdminUserListView.as_view()),
     path("admin/users/<int:pk>/", AdminUserDetailView.as_view()),
+    path("admin/ai-usage/", AdminAIUsageView.as_view()),
     path("admin/password/forgot/", AdminForgotPasswordView.as_view()),
     path("admin/password/reset/", AdminResetPasswordView.as_view()),
     path("admin/staff/", AdminStaffListCreateView.as_view()),
@@ -154,6 +161,8 @@ urlpatterns = [
     # ✅ STUDENT
     path("student/templates/", StudentTemplateListView.as_view(), name="student-templates"),
     path("student/templates/<int:pk>/", StudentTemplateDetailView.as_view(), name="student-template-detail"),
+    path("student/payments/template/order/", StudentTemplateOrderCreateView.as_view()),
+    path("student/payments/template/verify/", StudentTemplatePaymentVerifyView.as_view()),
 
     path("student/resumes/", StudentResumeListCreateView.as_view(), name="student-resumes"),
     path("student/resumes/<int:pk>/", StudentResumeDetailView.as_view(), name="student-resume-detail"),

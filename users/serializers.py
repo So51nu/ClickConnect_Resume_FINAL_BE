@@ -356,6 +356,91 @@ class ResumeTemplateSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
 
+
+
+
+
+
+
+
+from .access import has_template_access
+from .models import TemplatePayment, TemplateAccess
+
+class PricingMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TemplatePricing
+        fields = ["billing_type", "currency", "price", "discount_percent", "final_price", "status"]
+
+class StudentTemplateSerializer(serializers.ModelSerializer):
+    pricing = PricingMiniSerializer(read_only=True)
+    has_access = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeTemplate
+        fields = [
+            "id", "name", "category", "layout", "status",
+            "downloads", "rating", "color",
+            "source", "description", "schema", "preview_image", "version",
+            "pricing", "has_access",
+            "updated_at", "created_at",
+        ]
+
+    def get_has_access(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        return has_template_access(user, obj)
+
+class TemplatePaymentAdminSerializer(serializers.ModelSerializer):
+    user_phone = serializers.CharField(source="user.phone", read_only=True)
+    user_name = serializers.CharField(source="user.name", read_only=True)
+    template_name = serializers.CharField(source="template.name", read_only=True)
+
+    class Meta:
+        model = TemplatePayment
+        fields = [
+            "id",
+            "provider",
+            "status",
+            "order_id",
+            "payment_id",
+            "currency",
+            "amount",
+            "amount_display",
+            "pricing_snapshot",
+            "created_at",
+            "paid_at",
+            "user_phone",
+            "user_name",
+            "template_name",
+        ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class TemplatePricingSerializer(serializers.ModelSerializer):
     templateName = serializers.CharField(source="template.name", read_only=True)
 

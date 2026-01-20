@@ -5,8 +5,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 
+from .access import has_template_access
 from .models import Resume
 from .export_resume import build_pdf_bytes, build_docx_bytes
+
 
 class ResumeExportPDFView(APIView):
     permission_classes = [IsAuthenticated]
@@ -15,7 +17,17 @@ class ResumeExportPDFView(APIView):
         try:
             r = Resume.objects.get(pk=resume_id, user=request.user)
         except Resume.DoesNotExist:
-            return Response({"detail": "Resume not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Resume not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ✅ IMPORTANT: Paid template access check
+        if r.template and not has_template_access(request.user, r.template):
+            return Response(
+                {"detail": "This template is locked. Please purchase/subscribe to export."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         schema = r.data.get("__schema") or (r.template.schema if r.template else {})
         pdf_bytes = build_pdf_bytes(r.data, schema)
@@ -24,6 +36,7 @@ class ResumeExportPDFView(APIView):
         resp["Content-Disposition"] = f'attachment; filename="resume-{resume_id}.pdf"'
         return resp
 
+
 class ResumeExportDOCXView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -31,7 +44,17 @@ class ResumeExportDOCXView(APIView):
         try:
             r = Resume.objects.get(pk=resume_id, user=request.user)
         except Resume.DoesNotExist:
-            return Response({"detail": "Resume not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Resume not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ✅ IMPORTANT: Paid template access check
+        if r.template and not has_template_access(request.user, r.template):
+            return Response(
+                {"detail": "This template is locked. Please purchase/subscribe to export."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         schema = r.data.get("__schema") or (r.template.schema if r.template else {})
         docx_bytes = build_docx_bytes(r.data, schema)

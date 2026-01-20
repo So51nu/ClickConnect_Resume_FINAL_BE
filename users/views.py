@@ -1693,6 +1693,7 @@ from .models import (
     TemplatePricing,
     Subscription,
     Resume,
+    TemplatePayment, TemplateAccess,
 )
 from .serializers import (
     UserSerializer,
@@ -1707,7 +1708,15 @@ from .serializers import (
     AdminForgotPasswordSerializer,
     AdminResetPasswordSerializer,
     AdminUserSerializer,
+    StudentTemplateSerializer,
+    TemplatePaymentAdminSerializer,
 )
+import time
+import hmac
+import hashlib
+import requests
+from .access import has_template_access, has_active_subscription
+from rest_framework.exceptions import ValidationError
 
 # ✅ NEW: 31 marketplace templates file (zip wala)
 from .marketplace_templates import MARKETPLACE_TEMPLATES
@@ -2215,29 +2224,27 @@ class AdminTemplateDuplicateView(APIView):
 
         return Response(ResumeTemplateSerializer(dup, context={"request": request}).data, status=201)
 
-
-# =========================
-# ✅ STUDENT: Templates / Resumes
-# =========================
 class StudentTemplateListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = ResumeTemplateSerializer
+    serializer_class = StudentTemplateSerializer
 
     def get_queryset(self):
         return ResumeTemplate.objects.filter(status="active").order_by("name")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
 
 
 class StudentTemplateDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        try:
-            template = ResumeTemplate.objects.get(id=pk, status="active")
-            serializer = ResumeTemplateSerializer(template, context={"request": request})
-            return Response(serializer.data)
-        except ResumeTemplate.DoesNotExist:
+        template = ResumeTemplate.objects.filter(id=pk, status="active").first()
+        if not template:
             return Response({"detail": "Template not found or not active"}, status=404)
-
+        return Response(StudentTemplateSerializer(template, context={"request": request}).data)
 
 class StudentResumeListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
@@ -2247,6 +2254,10 @@ class StudentResumeListCreateView(generics.ListCreateAPIView):
         return Resume.objects.filter(user=self.request.user).order_by("-updated_at")
 
     def perform_create(self, serializer):
+        template = serializer.validated_data.get("template")  # template_id -> template
+        if template and not has_template_access(self.request.user, template):
+            raise ValidationError({"template_id": "This template is paid/locked. Please purchase or subscribe."})
+
         default_data = {
             "header": {"fullName": "", "jobTitle": "", "email": "", "phone": "", "location": "", "linkedin": "", "website": ""},
             "summary": "",
@@ -2255,19 +2266,207 @@ class StudentResumeListCreateView(generics.ListCreateAPIView):
             "skills": {"programming": [], "frameworks": [], "tools": []},
             "projects": [{"name": "", "desc": ""}],
         }
+
         serializer.save(
             user=self.request.user,
             data=serializer.validated_data.get("data") or default_data,
             status="draft",
         )
-
-
 class StudentResumeDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ResumeSerializer
 
     def get_queryset(self):
         return Resume.objects.filter(user=self.request.user)
+
+    def perform_update(self, serializer):
+        new_template = serializer.validated_data.get("template")  # may be None if not sent
+        if new_template and not has_template_access(self.request.user, new_template):
+            raise ValidationError({"template_id": "This template is paid/locked. Please purchase or subscribe."})
+        serializer.save()
+
+
+
+
+
+
+class StudentTemplateOrderCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        template_id = request.data.get("template_id")
+        if not template_id:
+            return Response({"detail": "template_id is required"}, status=400)
+
+        template = ResumeTemplate.objects.filter(id=template_id, status="active").first()
+        if not template:
+            return Response({"detail": "Template not found"}, status=404)
+
+        pricing = getattr(template, "pricing", None)
+        if not pricing or pricing.status != "active":
+            return Response({"detail": "Pricing not active for this template"}, status=403)
+
+        # Already unlocked?
+        if has_template_access(request.user, template):
+            return Response({"has_access": True, "detail": "Already has access"}, status=200)
+
+        # Free
+        if pricing.billing_type == "free":
+            return Response({"has_access": True, "detail": "Template is free"}, status=200)
+
+        # Subscription required
+        if pricing.billing_type == "subscription":
+            if has_active_subscription(request.user):
+                return Response({"has_access": True, "detail": "Subscription active"}, status=200)
+            return Response(
+                {"has_access": False, "detail": "Subscription required to access this template"},
+                status=402,
+            )
+
+        # One-time purchase via Razorpay
+        if pricing.currency != "INR":
+            return Response({"detail": "Only INR supported for Razorpay right now"}, status=400)
+
+        key_id = getattr(settings, "RAZORPAY_KEY_ID", "")
+        key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "")
+        if not key_id or not key_secret:
+            return Response({"detail": "Razorpay keys not configured in backend"}, status=500)
+
+        amount_paise = int(round(float(pricing.final_price or 0) * 100))
+        if amount_paise <= 0:
+            return Response({"detail": "Invalid pricing amount"}, status=400)
+
+        receipt = f"tpl_{template.id}_u{request.user.id}_{int(time.time())}"
+
+        r = requests.post(
+            "https://api.razorpay.com/v1/orders",
+            auth=(key_id, key_secret),
+            json={
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": receipt,
+                "notes": {"template_id": str(template.id), "user_id": str(request.user.id)},
+            },
+            timeout=20,
+        )
+
+        if r.status_code >= 400:
+            return Response({"detail": "Razorpay order create failed", "raw": r.text}, status=502)
+
+        order = r.json()
+        order_id = order.get("id")
+        if not order_id:
+            return Response({"detail": "Razorpay order_id missing"}, status=502)
+
+        TemplatePayment.objects.create(
+            user=request.user,
+            template=template,
+            provider="razorpay",
+            status="created",
+            order_id=order_id,
+            currency="INR",
+            amount=amount_paise,
+            amount_display=float(pricing.final_price or 0),
+            pricing_snapshot={
+                "billing_type": pricing.billing_type,
+                "currency": pricing.currency,
+                "price": pricing.price,
+                "discount_percent": pricing.discount_percent,
+                "final_price": pricing.final_price,
+                "template_name": template.name,
+            },
+        )
+
+        return Response(
+            {
+                "provider": "razorpay",
+                "key": key_id,
+                "order_id": order_id,
+                "amount": amount_paise,
+                "currency": "INR",
+                "template_id": template.id,
+                "template_name": template.name,
+            },
+            status=200,
+        )
+
+
+class StudentTemplatePaymentVerifyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        razorpay_order_id = request.data.get("razorpay_order_id")
+        razorpay_payment_id = request.data.get("razorpay_payment_id")
+        razorpay_signature = request.data.get("razorpay_signature")
+
+        if not (razorpay_order_id and razorpay_payment_id and razorpay_signature):
+            return Response({"detail": "Missing razorpay fields"}, status=400)
+
+        pay = TemplatePayment.objects.filter(
+            user=request.user,
+            order_id=razorpay_order_id,
+        ).select_related("template").first()
+
+        if not pay:
+            return Response({"detail": "Order not found"}, status=404)
+
+        key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "")
+        if not key_secret:
+            return Response({"detail": "Razorpay secret not configured"}, status=500)
+
+        message = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+        expected = hmac.new(key_secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+        if expected != razorpay_signature:
+            pay.status = "failed"
+            pay.payment_id = razorpay_payment_id
+            pay.signature = razorpay_signature
+            pay.save(update_fields=["status", "payment_id", "signature"])
+            return Response({"detail": "Invalid signature"}, status=400)
+
+        # Mark paid
+        pay.status = "paid"
+        pay.payment_id = razorpay_payment_id
+        pay.signature = razorpay_signature
+        pay.paid_at = timezone.now()
+        pay.save(update_fields=["status", "payment_id", "signature", "paid_at"])
+
+        # Grant access
+        TemplateAccess.objects.get_or_create(
+            user=request.user,
+            template=pay.template,
+            defaults={"access_type": "one_time", "payment": pay, "valid_until": None},
+        )
+
+        return Response({"detail": "Payment verified. Template unlocked.", "has_access": True}, status=200)
+
+
+class AdminPaymentsListView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        qs = TemplatePayment.objects.select_related("user", "template").all().order_by("-created_at")
+
+        status_q = request.GET.get("status")
+        provider_q = request.GET.get("provider")
+        search = (request.GET.get("search") or "").strip()
+
+        if status_q:
+            qs = qs.filter(status=status_q)
+        if provider_q:
+            qs = qs.filter(provider=provider_q)
+        if search:
+            qs = qs.filter(
+                Q(order_id__icontains=search)
+                | Q(payment_id__icontains=search)
+                | Q(user__phone__icontains=search)
+                | Q(user__name__icontains=search)
+                | Q(template__name__icontains=search)
+            )
+
+        data = TemplatePaymentAdminSerializer(qs, many=True).data
+        return Response({"results": data, "count": qs.count()})
+
 
 
 class StudentDashboardStatsView(APIView):
@@ -2297,10 +2496,175 @@ class StudentResumeDownloadView(APIView):
                 resume.template.downloads = (resume.template.downloads or 0) + 1
                 resume.template.save()
 
+            from .models import AIUsageEvent
+
+            is_ai = isinstance(resume.data, dict) and ("__ai" in resume.data or "__schema" in resume.data)
+            if is_ai:
+                job = (resume.data.get("header") or {}).get("jobTitle", "")
+                domain = (job or "").strip()[:80]
+                applied = resume.data.get("__schema") or {}
+                tpl_key = ""
+                layout = ""
+                if isinstance(applied, dict):
+                    tpl_key = str(applied.get("key") or applied.get("template_key") or "")
+                    layout = str(applied.get("layout") or "")
+
+                AIUsageEvent.objects.create(
+                    user=request.user,
+                    resume=resume,
+                    event_type="download",
+                    domain=domain,
+                    template_key=tpl_key,
+                    template_layout=layout,
+                    prompt_excerpt="",
+                )
+
+
             return Response({"message": "Download tracked", "download_count": resume.download_count})
         except Resume.DoesNotExist:
             return Response({"error": "Resume not found"}, status=404)
 
+
+from django.utils import timezone
+from django.db.models import Count
+from django.db.models.functions import TruncDay, TruncWeek, TruncMonth
+from rest_framework.permissions import IsAdminUser
+from .models import AIUsageEvent
+
+def _parse_date(s: str):
+    # expects YYYY-MM-DD
+    try:
+        return timezone.datetime.fromisoformat(s).date()
+    except Exception:
+        return None
+
+class AdminAIUsageView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        preset = (request.GET.get("preset") or "").lower().strip()
+        group = (request.GET.get("group") or "day").lower().strip()  # day|week|month
+        from_s = (request.GET.get("from") or "").strip()
+        to_s = (request.GET.get("to") or "").strip()
+
+        today = timezone.localdate()
+
+        # defaults
+        date_from = _parse_date(from_s) or (today - timezone.timedelta(days=30))
+        date_to = _parse_date(to_s) or today
+
+        if preset:
+            if preset in ("today", "1d"):
+                date_from = today
+                date_to = today
+            elif preset in ("7d", "week"):
+                date_from = today - timezone.timedelta(days=6)
+                date_to = today
+            elif preset in ("30d", "month"):
+                date_from = today - timezone.timedelta(days=29)
+                date_to = today
+            elif preset in ("90d",):
+                date_from = today - timezone.timedelta(days=89)
+                date_to = today
+            elif preset in ("1y", "year"):
+                date_from = today - timezone.timedelta(days=364)
+                date_to = today
+
+        dt_from = timezone.make_aware(timezone.datetime.combine(date_from, timezone.datetime.min.time()))
+        dt_to = timezone.make_aware(timezone.datetime.combine(date_to, timezone.datetime.max.time()))
+
+        qs = AIUsageEvent.objects.filter(created_at__range=(dt_from, dt_to))
+
+        gen_qs = qs.filter(event_type="generate")
+        dl_qs = qs.filter(event_type="download")
+
+        # KPIs
+        ai_resumes = gen_qs.count()
+        ai_downloads = dl_qs.count()
+        unique_users = gen_qs.values("user_id").distinct().count()
+        avg_per_user = round(ai_resumes / unique_users, 2) if unique_users else 0.0
+
+        # group function
+        if group == "week":
+            trunc = TruncWeek("created_at")
+        elif group == "month":
+            trunc = TruncMonth("created_at")
+        else:
+            trunc = TruncDay("created_at")
+
+        gen_series = (
+            gen_qs.annotate(bucket=trunc)
+            .values("bucket")
+            .annotate(count=Count("id"))
+            .order_by("bucket")
+        )
+        dl_series = (
+            dl_qs.annotate(bucket=trunc)
+            .values("bucket")
+            .annotate(count=Count("id"))
+            .order_by("bucket")
+        )
+
+        # merge into time_series
+        dl_map = {str(x["bucket"].date()): x["count"] for x in dl_series if x["bucket"]}
+        time_series = []
+        for x in gen_series:
+            if not x["bucket"]:
+                continue
+            key = str(x["bucket"].date())
+            time_series.append({
+                "label": key,
+                "ai_resumes": x["count"],
+                "downloads": dl_map.get(key, 0),
+            })
+
+        # Domains (top + low)
+        domain_counts = (
+            gen_qs.exclude(domain="")
+            .values("domain")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+        )
+        top_domains = [{"name": d["domain"], "count": d["count"]} for d in domain_counts[:8]]
+        low_domains = [{"name": d["domain"], "count": d["count"]} for d in domain_counts.reverse()[:8]]
+
+        # Templates
+        tpl_counts = (
+            gen_qs.exclude(template_key="")
+            .values("template_key", "template_layout")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+        )
+        templates = [
+            {"key": x["template_key"], "layout": x["template_layout"], "count": x["count"]}
+            for x in tpl_counts[:12]
+        ]
+
+        # Heatmap (day x hour) for generation peaks
+        # day: 0=Mon..6=Sun
+        heat = [[0 for _ in range(24)] for _ in range(7)]
+        for ev in gen_qs.only("created_at"):
+            dt = timezone.localtime(ev.created_at)
+            heat[dt.weekday()][dt.hour] += 1
+
+        return Response({
+            "range": {"from": str(date_from), "to": str(date_to), "group": group},
+            "kpis": {
+                "ai_resumes": ai_resumes,
+                "ai_downloads": ai_downloads,
+                "unique_users": unique_users,
+                "avg_per_user": avg_per_user,
+            },
+            "time_series": time_series,
+            "top_domains": top_domains,
+            "low_domains": low_domains,
+            "templates": templates,
+            "heatmap": {
+                "days": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+                "hours": list(range(24)),
+                "matrix": heat,
+            },
+        })
 
 # =========================
 # ✅ ADMIN: Resumes
@@ -2645,7 +3009,7 @@ class AITemplateSuggestionsView(APIView):
 #             "template_pk": tpl_obj.pk if tpl_obj else None,
 #             "applied_schema": applied_schema,
 #         }, status=status.HTTP_201_CREATED)
-
+from .models import AIUsageEvent
 from .ai_resume import call_openai_resume, build_dynamic_resume_schema
 from .ai_templates import get_suggestions, pick_random_template
 class AITemplateSuggestionsView(APIView):
@@ -2727,6 +3091,27 @@ class AIResumeGenerateView(APIView):
             data=data,
             status="draft",
         )
+                # infer domain from prompt / jobTitle
+        job = (data.get("header") or {}).get("jobTitle", "")
+        domain = (job or prompt).strip()[:80]
+
+        # template meta (from schema)
+        applied = data.get("__schema") or {}
+        tpl_key = ""
+        if isinstance(applied, dict):
+            tpl_key = str(applied.get("key") or applied.get("template_key") or "")
+        layout = str((applied.get("layout") if isinstance(applied, dict) else "") or "")
+
+        AIUsageEvent.objects.create(
+            user=request.user,
+            resume=resume,
+            event_type="generate",
+            domain=domain,
+            template_key=tpl_key,
+            template_layout=layout,
+            prompt_excerpt=(prompt[:500] if prompt else ""),
+        )
+
 
         return Response({
             "resume_id": resume.pk,
@@ -2734,3 +3119,14 @@ class AIResumeGenerateView(APIView):
             "data": resume.data,
             "applied_schema": template_schema,   # return schema as source of truth
         }, status=status.HTTP_201_CREATED)
+
+
+
+
+
+
+
+
+
+
+

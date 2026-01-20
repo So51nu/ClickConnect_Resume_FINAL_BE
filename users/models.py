@@ -440,6 +440,7 @@
 
 #     def is_valid(self):
 #         return (timezone.now() - self.created_at).total_seconds() < 300
+
 # models.py
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
@@ -645,6 +646,91 @@ def create_default_pricing(sender, instance: ResumeTemplate, created, **kwargs):
         )
 
 
+
+
+
+
+# =========================
+# TEMPLATE ACCESS + PAYMENTS
+# =========================
+class TemplatePayment(models.Model):
+    PROVIDER_CHOICES = (("razorpay", "Razorpay"),)
+    STATUS_CHOICES = (
+        ("created", "Created"),
+        ("paid", "Paid"),
+        ("failed", "Failed"),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="template_payments")
+    template = models.ForeignKey(ResumeTemplate, on_delete=models.CASCADE, related_name="payments")
+
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default="razorpay")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created")
+
+    # Razorpay fields
+    order_id = models.CharField(max_length=80, unique=True)
+    payment_id = models.CharField(max_length=80, blank=True, default="")
+    signature = models.CharField(max_length=200, blank=True, default="")
+
+    currency = models.CharField(max_length=10, default="INR")
+    amount = models.PositiveIntegerField(default=0)  # smallest unit (INR paise)
+    amount_display = models.FloatField(default=0)    # for UI display
+
+    pricing_snapshot = models.JSONField(default=dict, blank=True)  # billing_type, price, discount, final_price etc
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.phone} - {self.template.name} - {self.status}"
+
+
+class TemplateAccess(models.Model):
+    ACCESS_CHOICES = (
+        ("one_time", "One-time"),
+        ("subscription", "Subscription"),
+        ("admin_grant", "Admin Grant"),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="template_access")
+    template = models.ForeignKey(ResumeTemplate, on_delete=models.CASCADE, related_name="access_grants")
+
+    access_type = models.CharField(max_length=20, choices=ACCESS_CHOICES, default="one_time")
+    valid_until = models.DateTimeField(null=True, blank=True)  # lifetime => null
+
+    payment = models.ForeignKey(
+        TemplatePayment, on_delete=models.SET_NULL, null=True, blank=True, related_name="granted_access"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "template")
+
+    def __str__(self):
+        return f"{self.user.phone} -> {self.template.name}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # =========================
 # RESUME
 # =========================
@@ -679,3 +765,59 @@ class Resume(models.Model):
         if self.template:
             self.template_name = self.template.name
         super().save(*args, **kwargs)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from django.db import models
+from django.utils import timezone
+
+class AIUsageEvent(models.Model):
+    EVENT_CHOICES = (
+        ("generate", "Generate"),
+        ("download", "Download"),
+    )
+
+    user = models.ForeignKey("users.User", on_delete=models.CASCADE, related_name="ai_events")
+    resume = models.ForeignKey("users.Resume", on_delete=models.SET_NULL, null=True, blank=True, related_name="ai_events")
+
+    event_type = models.CharField(max_length=20, choices=EVENT_CHOICES)
+    domain = models.CharField(max_length=80, blank=True, default="")
+    template_key = models.CharField(max_length=80, blank=True, default="")  # ai-01, tpl-01 etc
+    template_layout = models.CharField(max_length=30, blank=True, default="")
+    prompt_excerpt = models.TextField(blank=True, default="")  # for audit/debug (short)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["event_type", "created_at"]),
+            models.Index(fields=["domain"]),
+            models.Index(fields=["template_key"]),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} - {self.user_id} - {self.created_at}"
